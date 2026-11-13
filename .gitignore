@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datasets
+data/raw/*
+data/processed/*
+
+# Modèles entraînés
+models/*.joblib
+
+# Rapports générés
+reports/
+
+# Airflow
+logs/
+airflow.db
+
+# IDE
+.vscode/

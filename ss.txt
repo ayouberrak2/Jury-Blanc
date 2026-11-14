@@ -1,0 +1,608 @@
+GUIDE COMPLET DU PROJET - DU CHARGEMENT AU MODELE RETENU
+=======================================================
+
+Ce document se lit dans l'ordre, meme si on debute avec Python.
+Les notebooks montrent les calculs et graphiques ; ce guide explique pourquoi
+ces operations existent, comment lire leur code et quelles limites garder.
+
+0. OBJECTIF ET LIMITES
+---------------------
+Le projet etudie des donnees etudiantes et les associations entre leurs
+caracteristiques et la classe Mental_Health_Risk : Low, Medium ou High.
+Il prepare ensuite des donnees, compare des classifieurs, optimise leurs
+parametres et conserve le meilleur pipeline selon la validation.
+Le but est pedagogique : aucune sortie n'est un diagnostic, un depistage
+clinique ou une base de sanction, d'admission ou de selection d'etudiants.
+Une bonne metrique sur ce fichier ne suffit pas pour une utilisation reelle.
+
+Une ligne du CSV represente un profil etudiant. Une colonne represente une
+variable. La cible est la reponse connue du dataset ; les autres mesures
+servent a tenter de la predire. Une association n'est pas une preuve de cause.
+
+1. ORGANISATION DES FICHIERS
+---------------------------
+data/raw/student_mental_health.csv : donnees originales, jamais reecrites.
+notebooks/01_eda.ipynb : exploration et preparation.
+notebooks/02_modelisation.ipynb : comparaison initiale sur validation simple.
+notebooks/03_optimisation.ipynb : validation imbriquee, optimisation et bilan.
+src/outlier.py : transformateur IQR compatible avec scikit-learn.
+src/pipeline.py : construction des transformations.
+src/train.py : fonction d'entrainement.
+src/evaluate.py : fonctions de calcul des metriques.
+src/optimize.py : recherche des parametres et validation croisee.
+models/selected_model.joblib : seul pipeline modele conserve sur disque.
+metrique/ : deux CSV finaux et deux images d'accuracy.
+reports/ : anciens exports et experiences, exclus de Git par .gitignore.
+requirements.txt : bibliotheques a installer.
+README.md : mode d'emploi court.
+ss.txt : ce guide.
+
+Les trois familles sont entrainees pour les comparer. Cela ne signifie pas
+que leurs trois pipelines doivent etre enregistres : seul le meilleur l'est.
+La branche Git actuelle est dev. Modifier le code ne cree pas automatiquement
+un nouveau commit ; les commits sont une operation distincte.
+
+2. INSTALLATION ET EXECUTION
+---------------------------
+Depuis PowerShell, dans le dossier du projet, creer un environnement si besoin :
+python -m venv .venv
+
+L'activer si la configuration PowerShell le permet :
+.\.venv\Scripts\Activate.ps1
+
+Ou utiliser directement son interpreteur, sans activation :
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m jupyter notebook
+
+Ouvrir les notebooks 01, 02 puis 03. Dans chacun, executer du haut vers le bas.
+Maj + Entree execute une cellule et passe a la suivante.
+Apres modification d'un fichier src, redemarrer le noyau puis tout executer :
+Python peut sinon garder une ancienne version d'une fonction en memoire.
+Choisir le kernel correspondant a l'environnement ou les dependances sont installees.
+
+Le notebook 03 reprend les donnees brutes lui-meme. Il ne depend pas des
+variables gardees en memoire dans le notebook 01 ou 02.
+Son execution peut prendre du temps : plusieurs modeles sont reentraines
+pour chaque configuration et pour chaque pli. Ce n'est pas un seul fit.
+
+3. NOTIONS PYTHON UTILES
+-----------------------
+Une variable memorise un objet : df est le tableau, X les entrees, y la cible.
+Le signe = affecte une valeur ; == compare ; != teste une difference.
+Les booleens True et False signifient vrai et faux. Une somme de booleens
+compte les True, car ils valent 1 dans ce calcul.
+Une liste, comme ["Low", "Medium", "High"], garde plusieurs valeurs ordonnees.
+Un dictionnaire, comme {"Accuracy": 0.75}, associe un nom a une valeur.
+Une boucle for repete un bloc pour chaque element. L'indentation fait partie
+de la syntaxe Python : elle indique quelles lignes appartiennent au bloc.
+Une fonction def rassemble un traitement reutilisable. return renvoie son resultat.
+Un commentaire commence par # ; il n'est pas execute.
+Une chaine entre triples guillemets au debut d'une fonction est sa documentation.
+
+Un DataFrame pandas est un tableau a lignes et colonnes.
+Une Series est une colonne ou une suite de valeurs avec un index.
+df["Age"] selectionne une colonne ; df[["Age", "GPA"]] en selectionne deux.
+loc selectionne par etiquette ou masque ; iloc par position dans le tableau.
+copy cree une copie pour eviter de modifier les donnees d'origine par accident.
+NaN represente une valeur absente, pas un zero et pas une classe.
+
+4. IMPORTS ET CHEMINS
+--------------------
+pandas, importe as pd, charge et transforme les tableaux.
+numpy, importe as np, gere les tableaux numeriques et les verifications.
+matplotlib.pyplot, importe as plt, cree les figures.
+seaborn, importe as sns, facilite les graphiques statistiques.
+scikit-learn fournit pipelines, classifieurs, metriques et validation.
+xgboost fournit XGBClassifier ; joblib enregistre le pipeline retenu.
+
+Path.cwd() renvoie le dossier courant. resolve() donne le chemin absolu.
+parent remonte au dossier precedent. Le code cherche la racine depuis le
+projet ou depuis notebooks. Il ajoute la racine a sys.path pour importer src.
+Avec Path, le signe / assemble des chemins, sans ecrire manuellement les
+separateurs Windows dans chaque cellule.
+
+5. CHARGEMENT ET AUDIT INITIAL - NOTEBOOK 01
+------------------------------------------
+pd.read_csv charge le fichier en memoire ; il ne change pas le CSV original.
+df.shape renvoie (nombre de lignes, nombre de colonnes).
+df.head() affiche cinq exemples. df.info() donne types et valeurs presentes.
+Le fichier utilise comporte 2000 lignes et 17 colonnes avant le split.
+
+Les nombres peuvent etre entiers ou decimaux ; les categories sont du texte.
+Un type indique le stockage, pas automatiquement la signification metier.
+Year_of_Study est un nombre, mais il represente une annee discrete.
+Student_ID ressemble a du texte mais reste un identifiant, pas une mesure.
+
+isna().sum() compte les valeurs absentes dans chaque colonne.
+duplicated().sum() compte les copies apres leur premiere occurrence.
+drop_duplicates() retire les doublons exactement identiques.
+On signale aussi les identifiants repetes et les profils sans identifiant.
+Deux profils identiques pourraient appartenir a deux personnes differentes :
+on ne les supprime donc pas automatiquement sans verifier leur origine.
+Le dataset actuel ne presente pas ces repetitions.
+
+Une ligne sans cible ne peut pas servir a l'apprentissage supervise.
+dropna(subset=["Mental_Health_Risk"]) retire uniquement ces lignes.
+Ne pas remplir une cible absente avec Low ou la classe majoritaire.
+Les trous des variables explicatives restent pour l'imputation du pipeline.
+
+6. SEPARATION TRAIN / TEST
+-------------------------
+X est construit en retirant Student_ID et Mental_Health_Risk.
+y contient seulement Mental_Health_Risk.
+On retire la cible de X pour ne pas donner directement la reponse au modele.
+On retire l'identifiant car il ne mesure pas le bien-etre.
+
+train_test_split avec test_size=0.20 donne 80 % train et 20 % test.
+Ici, cela correspond a 1600 et 400 lignes.
+stratify=y conserve approximativement les proportions des classes.
+random_state=42 fixe les tirages pour reproduire le meme decoupage.
+42 n'est pas une valeur qui rend le modele meilleur.
+Les index gardent l'association entre chaque ligne de X et sa classe y.
+
+Le split se fait avant le calcul des medianes, echelles et bornes utilisees
+pour apprendre. Sinon, les statistiques pourraient deja utiliser le test.
+Une fuite de donnees arrive lorsque les regles ou les choix apprennent une
+information du jeu cense rester independant.
+Le test a deja ete consulte dans l'historique : il ne doit plus servir a de
+nouveaux reglages. Le reexecuter pour reproduire un bilan ne le rend pas neuf.
+
+7. STATISTIQUES ET CONTROLES SUR LE TRAIN
+---------------------------------------
+describe sur les nombres donne count, mean, std, min, 25 %, 50 %, 75 % et max.
+count compte les valeurs presentes. mean est la moyenne. std mesure la dispersion.
+50 % est la mediane. 25 % et 75 % sont les quartiles.
+Pour les textes, describe donne les categories uniques, la plus frequente et son effectif.
+Ces statistiques ignorent les trous ; il faut donc aussi lire le tableau des manquants.
+
+isna().mean() * 100 transforme les booleens en pourcentage absent.
+Par exemple, 8 absences sur 100 lignes donnent 0.08, puis 8 %.
+round(2) arrondit le tableau affiche ; il ne reecrit pas le dataset original.
+
+Les conditions de controle utilisent | pour OU, avec des parentheses.
+Exemple : (heures < 0) | (heures > 168).
+% 1 donne un reste nul pour un entier : on peut ainsi signaler une annee non entiere.
+On controle les ages/annees non positifs, les etudes hors de 0 a 168 h/semaine
+et la presence hors de 0 a 100 %. Ces tests ne signalent rien dans le train actuel.
+Un zero signifie que ce controle n'a rien trouve, pas que le dataset est parfait.
+Les echelles GPA, stress et soutien ne sont pas supposees connues : leur
+dictionnaire doit confirmer les bornes metier avant de corriger une valeur.
+
+8. DISTRIBUTION DES CLASSES ET SMOTE
+----------------------------------
+value_counts compte les classes. reindex les affiche dans l'ordre souhaite.
+Le train actuel contient environ 34 % High, 33 % Low et 33 % Medium.
+Les classes sont donc de tailles proches ; SMOTE n'est pas necessaire ici.
+Ajouter des exemples artificiels ne remplace pas une meilleure evaluation.
+
+Si un futur dataset est desequilibre, examiner les effectifs et les scores
+par classe. Tester le reechantillonnage seulement dans les plis d'apprentissage.
+Ne jamais appliquer SMOTE au test. Pour des entrees mixtes, SMOTENC peut etre
+plus adapte que SMOTE sur du one-hot, qui peut creer des fractions de categories.
+Aucun de ces sur-echantillonneurs n'est utilise dans la version actuelle.
+
+9. HEURES, AGE ET RELATIONS
+--------------------------
+Les conversions horaires reposent sur une hypothese non confirmee : sommeil,
+ecran et reseaux sociaux seraient des heures quotidiennes.
+Study_Hours_Per_Week indique deja une duree hebdomadaire dans son nom.
+Sous l'hypothese quotidienne, multiplier par 7 : 7 h/jour deviennent 49 h/semaine.
+Une semaine compte 168 h. La somme sommeil + ecran + etudes est indicative.
+Ne pas ajouter une seconde fois les reseaux sociaux, peut-etre inclus dans l'ecran.
+Les etudes peuvent aussi se faire sur ecran : la somme peut doubler des activites.
+Les alertes reseaux > ecran ou total >168 ne sont donc pas des erreurs prouvees.
+Ces colonnes sont uniquement dans eda, pas dans les entrees du modele.
+
+Pour age/annee, groupby regroupe les ages par niveau et agg calcule plusieurs resumes.
+La heatmap compte les couples age/annee. Un parcours atypique peut avoir une explication.
+On n'ajuste pas les ages pour correspondre a un parcours universitaire suppose normal.
+Une annee ne permet pas de deduire automatiquement licence ou master.
+
+Les boxplots montrent mediane, quartiles, dispersion et valeurs extremes.
+Des groupes peuvent avoir des medianes differentes mais se chevaucher fortement.
+Les tableaux croises donnent les classes a l'interieur de chaque categorie.
+On divise chaque ligne par son propre effectif pour obtenir des proportions.
+Un petit groupe donne des proportions plus instables : regarder aussi sa taille.
+Association ne signifie pas causalite ; aucun graphique ne prouve un effet clinique.
+
+10. CORRELATIONS ET FACTEURS ASSOCIES
+-----------------------------------
+Pearson mesure une association lineaire entre deux nombres, de -1 a +1.
++1 : progression commune parfaite ; -1 : progression opposee parfaite.
+Proche de zero : peu de relation lineaire, mais une relation non lineaire reste possible.
+La diagonale vaut 1, une variable etant comparee a elle-meme.
+Les nuages de points permettent de voir les formes et superpositions.
+
+Spearman compare des rangs. Pour la cible ordonnee, on utilise temporairement
+Low=0, Medium=1, High=2. Ce codage sert a l'EDA seulement, il n'est pas ajoute a X.
+Un coefficient positif accompagne plutot des classes plus elevees ; negatif, plus faibles.
+abs retire le signe pour classer la force ; le signe reste dans la colonne Spearman.
+Le classement des categories utilise un autre indicateur : l'ecart de proportion High.
+Un ecart de 40 % a 25 % vaut 15 points de pourcentage.
+Ces valeurs ne sont pas directement comparables aux correlations Spearman.
+Ces analyses univariees ne mesurent pas l'importance conjointe dans un modele.
+
+11. VALEURS EXTREMES ET IQR
+--------------------------
+Q1 est le 25e percentile ; Q3 est le 75e. IQR = Q3 - Q1.
+Borne basse = Q1 - 1.5 * IQR. Borne haute = Q3 + 1.5 * IQR.
+Exemple : Q1=6, Q3=8, IQR=2. Bornes : 3 et 11.
+Une valeur 12 est alors ramenee a 11 ; une valeur 7 reste 7.
+
+Ce bornage utilise clip et conserve les lignes. Il ne remplace plus les
+extremes par NaN, contrairement a une ancienne experience du projet.
+Il limite les extremes statistiques, mais peut modifier des observations valides.
+Ce n'est pas une preuve d'erreur ni une amelioration garantie des scores.
+La comparaison avec/sans IQR a montre peu d'effet dans les essais anterieurs.
+Age et Year_of_Study sont exclus du bornage automatique.
+Les colonnes concernees sont centralisees dans OUTLIER_COLUMNS.
+
+12. CLASSE IQROutlierTransformer - src/outlier.py
+-----------------------------------------------
+Une classe conserve une configuration et des actions dans un meme objet.
+__init__(columns, factor=1.5) memorise les colonnes et le coefficient.
+fit(X, y=None) calcule les bornes sur les donnees recues et les stocke dans limits_.
+Le suffixe _ indique un attribut appris, selon la convention scikit-learn.
+Si IQR vaut zero ou manque, la colonne n'est pas bornee par cette regle.
+fit renvoie self pour suivre l'interface des transformateurs scikit-learn.
+
+transform(X) verifie que fit a deja ete appele, copie X et applique les bornes.
+Il ne recalcule pas les bornes. Le test ne peut donc pas les modifier.
+check_is_fitted signale une erreur si on transforme avant d'apprendre.
+BaseEstimator et TransformerMixin donnent la compatibilite avec Pipeline et clone.
+Cette petite classe est utile : une simple fonction appliquee avant la validation
+croisee apprendrait les bornes sur tout le train, y compris les plis a valider.
+L'entree attendue est un DataFrame avec les colonnes prevues.
+
+13. CONSTRUCTION DU PREPROCESSING - src/pipeline.py
+-------------------------------------------------
+build_preprocessor(X_train, use_outliers=True) construit un objet, sans apprendre
+encore de mediane, borne ou echelle. Il utilise seulement les noms et types de colonnes.
+Les nombres et les textes suivent deux branches differentes.
+ColumnTransformer applique chaque branche aux bonnes colonnes puis assemble les resultats.
+
+Branche numerique : SimpleImputer(strategy='median'), puis StandardScaler.
+La mediane est une reference simple, moins sensible aux extremes que la moyenne.
+Exemple : pour 2, 3, 100, la mediane est 3 alors que la moyenne vaut 35.
+Cela ne prouve pas que la mediane soit toujours la meilleure methode d'imputation.
+La standardisation calcule (valeur - moyenne_train) / ecart_type_train.
+Une valeur negative est normale : elle est sous la moyenne du train.
+Les sorties ne sont pas bornees entre 0 et 1.
+
+Branche categorielle : SimpleImputer(strategy='most_frequent'), puis OneHotEncoder.
+Le mode est la categorie la plus frequente du train.
+OneHotEncoder produit un indicateur par categorie, sans ordre numerique arbitraire.
+Pour Gender, attribuer 0, 1 et 2 comme valeurs explicatives suggererait des distances
+qui ne correspondent pas necessairement a une signification utile.
+Pour une categorie reellement ordonnee, un encodage ordinal explicite est possible ;
+nous conservons une seule methode categorielle pour garder le code lisible.
+Les colonnes binaires sont aussi traitees par cette branche.
+
+handle_unknown='ignore' accepte une categorie absente du train : ses indicateurs
+sont alors tous a zero. Cela evite une erreur sans inventer une categorie apprise.
+sparse_output=False renvoie un tableau dense, simple a lire sur ce petit dataset.
+keep_empty_features=True conserve une colonne entierement vide dans un pli.
+Le comportement de repli de scikit-learn devrait etre reexamine si ce cas survient.
+
+Le pipeline global fait IQR, puis ColumnTransformer.
+use_outliers=False remplace IQR par passthrough : les valeurs passent sans bornage.
+fit_transform sur le train apprend toutes les regles puis transforme le train.
+transform sur de nouvelles lignes reutilise les regles, sans les reapprendre.
+Le schema numerique de cette version ne comporte pas de features experimentales.
+Une reference a src.features, fichier absent, a ete retiree pour corriger l'import.
+
+14. PREMIERE MODELISATION - NOTEBOOK 02
+-------------------------------------
+Le train de 1600 lignes est separe en 1280 pour apprendre et 320 pour valider.
+Les 400 lignes du test final restent a part.
+Les trois modeles utilisent exactement ces memes ensembles pour une comparaison coherente.
+Cette premiere validation sert a comprendre les resultats ; le notebook 03 utilise
+une validation croisee pour une comparaison moins dependante d'un seul split.
+Les objets de ce notebook restent en memoire : aucun pipeline n'y est sauvegarde.
+
+OrdinalEncoder est utilise sur y, pas sur les colonnes de X.
+XGBoost attend des codes entiers consecutifs : 0, 1 et 2 ici.
+fit_transform(y_fit.to_frame()).astype(int).ravel() apprend les classes sur y_fit ; transform reutilise le codage en validation.
+categories_[0] contient ici Low, Medium, High dans l'ordre fixe par categories.
+Donc 0=Low, 1=Medium, 2=High. Ce ne sont pas des nombres de gravite clinique.
+Les graphiques reprennent les noms pour eviter une mauvaise interpretation.
+inverse_transform convertit les predictions numeriques en texte.
+
+15. LES TROIS CLASSIFIEURS
+-------------------------
+La regression logistique est une reference lineaire de classification.
+Elle estime les probabilites des classes, malgre son nom qui contient regression.
+max_iter limite les iterations du solveur ; il ne designe pas un nombre d'arbres.
+C est l'inverse de la force de regularisation : plus C est petit, plus la contrainte
+sur les coefficients est forte. La standardisation aide ce type de modele.
+
+Random Forest construit plusieurs arbres aleatoires et combine leurs predictions.
+n_estimators donne le nombre d'arbres. max_depth limite leur profondeur.
+min_samples_leaf impose un nombre minimum d'observations dans une feuille.
+Une foret peut generaliser mieux qu'un arbre seul, mais peut encore memoriser le train.
+Beaucoup d'arbres ne compensent pas automatiquement une profondeur excessive.
+
+XGBoost ajoute des arbres successifs. learning_rate controle la contribution de
+chaque etape ; max_depth limite la profondeur ; n_estimators fixe le nombre d'etapes.
+subsample utilise une fraction des lignes ; colsample_bytree une fraction des colonnes.
+multi:softprob correspond au cas multiclasses avec probabilites.
+mlogloss est une mesure interne ; notre critere de choix reste le F1 macro de validation.
+Les parametres de la grille sont des essais limites, pas une recherche exhaustive de tous les modeles possibles.
+
+16. FONCTION train_model - src/train.py
+--------------------------------------
+Arguments : un classifieur, les entrees brutes X_train, la cible y_train et l'option IQR.
+La fonction construit un preprocessing neuf et clone la configuration du classifieur.
+clone ne copie pas un apprentissage ancien : il recree un estimateur non ajuste.
+Un Pipeline associe les etapes preprocessing et model.
+fit apprend d'abord les transformations, puis le modele sur leurs sorties.
+La fonction renvoie le pipeline entier pour predire ensuite a partir des colonnes brutes.
+Ne pas lui transmettre des tableaux deja prepares par un fit sur tout le dataset.
+Le nom d'un argument X_train ne suffit pas a eviter une fuite : il faut transmettre les bonnes lignes.
+Cette fonction ne sauvegarde rien et ne touche pas aux fichiers.
+
+17. METRIQUES - src/evaluate.py
+------------------------------
+evaluate_model recoit un pipeline deja entraine, X_evaluation, y_evaluation et les noms de classes.
+Il appelle predict pour les codes et predict_proba pour les probabilites.
+Il ne fait jamais fit. Il delegue les calculs a evaluate_predictions.
+Cette seconde fonction peut aussi evaluer des predictions hors pli, sans un modele unique.
+Les codes doivent correspondre a l'ordre des noms de classes du OrdinalEncoder.
+Les classifieurs utilises sont multiclasses et fournissent predict_proba.
+
+Accuracy : nombre de bonnes classes / nombre de lignes.
+Exemple : 75 bonnes classes sur 100 donnent 0.75, soit 75 %.
+Precision d'une classe : parmi les predictions de cette classe, quelle part est correcte ?
+Rappel d'une classe : parmi les vrais exemples de cette classe, quelle part est retrouvee ?
+F1 = 2 * precision * rappel / (precision + rappel), si le denominateur est non nul.
+F1 penalise un fort desequilibre entre precision et rappel.
+Macro : calculer le score par classe puis faire une moyenne a poids egaux.
+Weighted : moyenne ponderee par les effectifs ; elle n'est pas le critere principal ici.
+Support : nombre de vrais exemples d'une classe dans l'ensemble evalue.
+zero_division=0 donne zero a une metrique non definie faute de predictions.
+
+ROC-AUC macro OvR compare chaque classe aux autres selon les probabilites.
+C'est une mesure de classement, pas une garantie de probabilites calibrees.
+L'AUC multiclasses reste NaN si une vraie classe manque dans l'evaluation.
+Une probabilite elevee du prototype n'est pas une certitude clinique.
+
+La matrice de confusion place les vraies classes en lignes et les predictions en colonnes.
+La diagonale contient les predictions correctes.
+Une case ligne High, colonne Low signifie un vrai High predit Low.
+Le rapport donne precision/rappel/F1 par classe, car une bonne moyenne peut cacher une classe faible.
+Le resultat de la fonction est un dictionnaire : metrics, report, confusion_matrix et predictions.
+Le tableau CSV final conserve les metriques ; les details peuvent etre affiches en memoire.
+
+18. POURQUOI UNE VALIDATION IMBRIQUEE - NOTEBOOK 03
+-------------------------------------------------
+Utiliser les memes lignes pour regler les parametres et mesurer leur performance peut
+rendre le resultat trop optimiste. On separe donc deux niveaux de validation.
+
+Niveau externe : 5 plis du train. Pour chaque passage, 1280 lignes servent a apprendre
+et 320 sont reservees a l'evaluation de ce passage.
+Niveau interne : sur ces 1280 lignes uniquement, GridSearchCV utilise 3 plis pour choisir les parametres.
+Il reentraine ensuite la configuration retenue sur les 1280 lignes et predit les 320 externes.
+On recommence jusqu'a ce que chacune des 1600 lignes ait ete predite une fois hors pli.
+
+Le preprocessing fait partie du pipeline transmis a GridSearchCV. Les bornes IQR,
+mediane, mode, moyenne, echelle et categories se reapprennent dans chaque fit interne.
+Aucun de ces calculs ne voit les lignes externes a valider.
+Les plis sont stratifies, melanges avec random_state=42 et identiques entre familles.
+Ce protocole ne remplace pas une nouvelle evaluation independante apres de nombreuses
+experiences sur ces memes plis. Le projet a deja explore plusieurs configurations.
+
+19. FONCTION optimize_model - src/optimize.py
+-------------------------------------------
+Elle recoit un classifieur, une grille de parametres et les donnees d'apprentissage.
+Elle construit un pipeline non ajuste et un StratifiedKFold a 3 plis.
+GridSearchCV essaie les combinaisons de la grille et les classe par F1 macro.
+Les noms model__C ou model__max_depth ciblent l'etape model du Pipeline :
+le double underscore separe le nom de l'etape et le nom de son parametre.
+
+search.fit lance les essais. best_params_ donne les parametres retenus.
+best_estimator_ donne le pipeline reentraine avec ces parametres sur toutes les lignes recues.
+Le comportement refit=True est le defaut de GridSearchCV.
+best_score_ est le score interne de recherche : ce n'est pas le score externe.
+return_train_score permet d'observer les scores internes du train.
+error_score='raise' rend une erreur visible au lieu de la masquer dans un score NaN.
+n_jobs=1 evite de multiplier les recherches paralleles ; les modeles a arbres peuvent
+utiliser leurs deux threads declares. C'est un choix de ressources, pas un critere scientifique.
+
+20. FONCTION cross_validate_model
+--------------------------------
+X_train est un DataFrame et y_train est converti en tableau numpy.
+On cree trois tableaux de la taille du train : codes predits, probabilites et numero du pli.
+Les probabilites ont une colonne par classe, dans l'ordre du OrdinalEncoder.
+Les tableaux sont remplis a la position exacte des lignes de validation.
+
+outer_cv.split renvoie deux listes de positions, train_index et val_index.
+iloc selectionne les lignes de X par position. Pour y en numpy, les crochets utilisent aussi ces positions.
+enumerate(..., start=1) donne les numeros 1 a 5.
+A chaque tour, optimize_model ne recoit que X_fit et y_fit.
+Le pipeline retenu predit X_val. Ses predictions sont placees dans les tableaux globaux.
+model.score sur X_fit donne ici l'accuracy du train du pli, pas le F1.
+Le dictionnaire de metriques de validation est ajoute a une ligne avec le numero du pli.
+Une liste de lignes devient un DataFrame a la fin.
+
+Le retour contient evaluation globale hors pli, folds, probabilities et fold_numbers.
+Le F1 calcule sur toutes les predictions reunies peut differer legerement de la moyenne
+des cinq F1 : F1 est une fonction non lineaire. Ce n'est pas automatiquement une erreur.
+Le classement final utilise le F1 global hors pli, de facon identique pour les trois familles.
+
+21. CHOISIR ET SAUVEGARDER UNIQUEMENT LE MEILLEUR
+----------------------------------------------
+validation_scores contient une ligne par famille, sur predictions hors pli.
+idxmax trouve le nom du meilleur F1 macro. Ce choix est fait avant les scores test.
+Dans les resultats actuels, il s'agit de Logistic Regression.
+Chaque famille est ensuite reoptimisee sur les 1600 lignes train, pour obtenir les
+pipelines finaux necessaires au bilan comparatif. Ils restent en memoire.
+Le notebook ne sauvegarde que le pipeline associe a selected_name.
+
+models/selected_model.joblib contient un dictionnaire best_bundle :
+model_name : nom du classifieur retenu.
+pipeline : preprocessing complet et classifieur ajuste.
+target_encoder : objet pour decoder les classes.
+class_names : noms dans l'ordre des codes.
+training_rows : nombre de lignes d'apprentissage.
+best_parameters : configuration retenue par la recherche sur tout le train.
+selection_metric : rappel que le choix vient du F1 de validation.
+
+Un seul joblib.dump est execute dans le notebook 03, apres la boucle d'optimisation.
+Les anciens fichiers joblib des perdants sont retires du dossier models une fois
+le nouveau fichier retenu verifie. Aucun autre notebook courant ne sauvegarde de modele.
+Le choix du meilleur ne depend pas d'un classement des scores test.
+
+22. LIRE LES SCORES FINAUX ET LE SURAPPRENTISSAGE
+----------------------------------------------
+Le CSV validation_test_metrics.csv contient 9 lignes : trois ensembles pour chaque famille.
+Train : score apparent du pipeline final sur les 1600 lignes vues pendant son fit.
+Validation CV : predictions produites par plusieurs pipelines ajustes dans les plis externes.
+Test : pipeline final evalue sur les 400 lignes separees au debut.
+Ce ne sont pas toujours les memes ajustements : il faut lire la provenance des scores.
+
+Pour mesurer proprement l'ecart train/validation d'un ajustement, comparer les deux
+scores de chaque pli dans cv_fold_metrics.csv.
+Un grand ecart suggere du surapprentissage : le modele apprend des details qui se
+generalisent mal. Ce n'est pas automatiquement une preuve d'erreur du preprocessing.
+Limiter profondeur, taille des feuilles ou renforcer la regularisation peut aider,
+mais une contrainte trop forte peut aussi baisser la performance de validation.
+Un faible ecart seul ne suffit pas : un modele mediocre sur train et validation sous-apprend.
+
+Les chiffres historiques peuvent varier legerement selon le protocole :
+F1 moyen en CV fixe de la regression logistique : environ 0.7491.
+F1 global de validation imbriquee : environ 0.7505.
+Accuracy test du pipeline final : environ 0.7525 ; F1 test : environ 0.7514.
+Ne pas les presenter comme le meme calcul ou comme une garantie clinique.
+Les petites differences entre regression logistique et LDA ne prouvent pas une superiorite statistique.
+
+23. EXPERIENCES ANTERIEURES ET CHOIX CONSERVES
+--------------------------------------------
+Les essais precedents ont inclus Random Forest et XGBoost plus contraints,
+ainsi que LDA, SVM, Naive Bayes et un arbre de decision.
+Le top observe dans la comparaison fixe etait regression logistique, LDA puis SVM.
+Les arbres plus contraints reduisaient l'ecart mais ne donnaient pas une meilleure reference globale.
+Les scores des protocoles differents ne doivent pas etre melanges comme une preuve definitive.
+
+Trois features ont aussi ete essayees : sommeil au carre, stress * soutien,
+et heures d'etude * annee. Elles n'ont pas ameliore le F1 de validation dans cet essai.
+Leur code optionnel n'est pas necessaire a la version courante. L'import d'un module
+src.features absent a ete corrige ; aucune de ces features n'est active dans le pipeline retenu.
+Les anciens essais, lorsqu'ils sont disponibles, restent des documents d'exploration,
+pas des fichiers indispensables a l'execution des trois notebooks actuels.
+
+24. LES QUATRE FICHIERS DE metrique
+----------------------------------
+validation_test_metrics.csv : tableau des metriques train/validation/test.
+cv_fold_metrics.csv : 15 lignes, soit 5 plis pour chacune des trois familles.
+accuracy_cv.png : accuracy train/validation par pli et point test final.
+accuracy_train_validation_test.png : comparaison globale en barres.
+
+Les courbes ne montrent pas des epoques d'apprentissage. L'axe 1 a 5 represente
+les plis. Le point Test appartient au pipeline final et n'est pas une etape d'optimisation.
+Les exports detailles precedents sont dans reports lorsqu'ils ont ete conserves.
+Le notebook 02 affiche une comparaison initiale sans creer de nouveaux exports dans metrique.
+Les fichiers joblib ne vont pas dans metrique mais dans models.
+
+25. RECHARGER LE MODELE ET PREDIRE
+--------------------------------
+Depuis la racine du projet, utiliser le Python de l'environnement :
+
+import joblib
+import pandas as pd
+
+bundle = joblib.load("models/selected_model.joblib")
+new_data = pd.DataFrame([{
+    "Age": 22, "Gender": "Female", "Year_of_Study": 3,
+    "Sleep_Hours": 7.0, "Study_Hours_Per_Week": 20.0, "GPA": 2.8,
+    "Social_Media_Hours": 4.0, "Screen_Time_Hours": 7.0,
+    "Physical_Activity": "Moderate", "Financial_Stress": 5.0,
+    "Family_Support": 7.0, "Attendance_Rate": 85.0,
+    "Part_Time_Job": "No", "Diet_Quality": "Average",
+    "Previous_Mental_Health_History": "No"
+}])
+codes = bundle["pipeline"].predict(new_data)
+classes = bundle["target_encoder"].inverse_transform(codes.astype(int).reshape(-1, 1)).ravel()
+print(classes)
+
+Cet exemple illustre l'interface, pas une situation clinique ni une validation.
+Fournir les 15 colonnes brutes attendues, pas des colonnes deja standardisees.
+Ne pas ajouter Student_ID ou la cible au formulaire d'entree du modele.
+Ne pas refaire fit ou fit_transform avant une prediction : le pipeline est deja ajuste.
+Les trous reconnus sont imputes ; une categorie inconnue est acceptee par l'encodeur.
+Cela ne valide pas automatiquement des fautes de saisie, colonnes absentes ou unites incorrectes.
+Ne charger que des fichiers joblib de confiance : ce format peut executer du code Python.
+Le module src.outlier doit rester accessible lors du chargement du pipeline.
+
+26. ERREURS COURANTES ET MAINTENANCE
+----------------------------------
+ModuleNotFoundError : verifier le kernel, les dependances et le dossier du projet.
+Une reference a un fichier supprime ne se corrige pas en ignorant l'erreur : retirer
+l'import inutile ou restaurer une implementation necessaire.
+NameError dans un notebook : une cellule precedente n'a pas ete executee.
+Ancien comportement apres modification : redemarrer le kernel et executer tout.
+Erreur de colonne : verifier orthographe, noms, types et schema du CSV.
+Un score bas ne signifie pas automatiquement que le code est faux.
+Un score train de 100 % ne signifie pas que le modele generalise bien.
+Une AUC elevee ne signifie pas que les probabilites sont calibrees.
+Ne pas modifier uniquement les sorties affichees pour faire paraitre les scores meilleurs.
+
+Pour maintenir le projet : modifier un choix a la fois, garder le meme split,
+comparer avec une reference et indiquer le protocole exact de chaque resultat.
+Conserver les hypotheses et limites dans les Markdown, pas seulement les chiffres.
+Les notebook 01 et 02 expliquent le parcours ; le 03 contient le choix et l'artefact final.
+Le code est volontairement separe en petites fonctions avec des responsabilites claires.
+
+27. CONTROLES REALISES POUR CETTE VERSION
+---------------------------------------
+Verifier la syntaxe des fichiers Python et le format des notebooks.
+Verifier IQR sur un exemple connu et la conservation des donnees originales.
+Verifier une evaluation sur un classifieur au comportement connu.
+Executer les trois notebooks, avec leurs tableaux et graphiques.
+Verifier l'absence de NaN/infinis et le maintien des dimensions.
+Verifier le chargement du seul pipeline conserve et le decodage de ses predictions.
+Verifier la presence des quatre fichiers metrique et du seul modele selectionne.
+Ces verifications testent le fonctionnement et la reproductibilite, pas une validite clinique.
+
+28. POURQUOI CE CHOIX FINAL
+--------------------------
+La regression logistique reste le choix actuel parmi les essais realises :
+bon F1 de validation, faible ecart train/validation et lecture simple du pipeline.
+La formulation correcte est meilleur choix actuel parmi les modeles et configurations
+testes, pas meilleur modele universel ni certitude pour tous les datasets.
+L'etape 5 est maintenant ajoutee : voir le chapitre 29 pour Airflow et Streamlit.
+Ce projet courant couvre exploration, preparation, comparaison, optimisation et sauvegarde.
+
+
+29. ENCODAGE ACTUEL ET APPLICATION
+--------------------------------
+La cible utilise OrdinalEncoder(categories=[["Low", "Medium", "High"]]).
+Pour les classifieurs, encoder avec fit_transform(y_train.to_frame()).astype(int).ravel().
+Sur le test, utiliser transform(y_test.to_frame()).astype(int).ravel().
+Pour decoder, inverse_transform(codes.reshape(-1, 1)).ravel().
+Les noms des classes sont categories_[0]. Le fichier modele utilise target_encoder.
+Cet ordre de codes facilite la lecture mais ne rend pas le modele ordinal.
+
+L'application est app/streamlit_app.py. Elle charge le meilleur pipeline sans refaire fit.
+Les metriques visibles viennent du split test du CSV actuel, deja consulte dans le projet.
+La comparaison du notebook est affichee separement comme historique.
+Le formulaire comporte 15 champs, repartis entre profil, habitudes et contexte.
+Il applique le preprocessing appris et decode la prediction avec OrdinalEncoder.
+Les sorties restent pedagogiques, sans interpretation clinique.
+Le theme est dans .streamlit/config.toml et le style dans app/style.css.
+Le Dockerfile.streamlit utilise requirements.txt. Le service streamlit de Compose
+monte models, data et metrique en lecture seule et expose localhost:8501.
+Lancer : docker compose up --build -d streamlit.
+
+30. FONCTIONS A UTILISER DANS UN DAG
+----------------------------------
+Le fichier src/airflow.py contient les quatre fonctions de traitement.
+prepare_data charge, controle la cible et separe les donnees ; une reprise garde son snapshot.
+preprocess_data apprend les transformations sur le train, puis transforme train et test.
+train_selected_model entraine la regression logistique C=1 et assemble le pipeline complet.
+evaluate_and_save calcule train/validation/test puis publie le pipeline si tout reussit.
+La validation utilise cinq plis a parametres figes, pas une nouvelle recherche imbriquee.
+Les donnees temporaires et rapports sont dans le work_dir fourni par l'appelant.
+Seul selected_model.joblib est publie dans models. Le candidat temporaire est retire apres succes.
+Le fichier DAG qui appellera ces fonctions reste a ecrire dans dags/.
+Le planning, les reprises et les alertes Airflow ne sont donc pas declares dans un DAG du depot actuel.
+La configuration Docker Airflow sert de base locale pour cette prochaine integration.

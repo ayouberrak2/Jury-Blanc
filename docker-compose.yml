@@ -1,0 +1,48 @@
+services:
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    command: standalone
+    init: true
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/project/dags
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Africa/Casablanca
+      AIRFLOW__CORE__PARALLELISM: "2"
+      JURY_PROJECT_ROOT: /opt/project
+      PYTHONPATH: /opt/project
+    volumes:
+      - airflow_state:/opt/airflow
+      - ./src:/opt/project/src:ro
+      - ./dags:/opt/project/dags:ro
+      - ./data:/opt/project/data:ro
+      - ./models:/opt/project/models
+      - ./reports:/opt/project/reports
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --local"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  streamlit:
+    image: juryblanc-streamlit:local
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    init: true
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./models:/opt/project/models:ro
+      - ./data:/opt/project/data:ro
+      - ./metrique:/opt/project/metrique:ro
+    restart: unless-stopped
+
+volumes:
+  airflow_state:

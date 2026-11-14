@@ -23,3 +23,5 @@ airflow.db
 
 # IDE
 .vscode/
+.pytest_cache/
+airflow_state/

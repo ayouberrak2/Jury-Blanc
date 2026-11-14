@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.pyc
+data
+models
+metrique
+reports
+notebooks
+
+.pytest_cache
